@@ -66,6 +66,28 @@ td a:hover{color:#93c5fd;border-bottom-color:#93c5fd}
 .near h2 .cnt{color:var(--muted);font-size:13px;font-weight:400;margin-left:8px}
 .near .intro{color:var(--muted);font-size:13px;margin:0 0 12px}
 
+.codeblock{background:var(--card);border:1px solid var(--border);border-radius:12px;
+  padding:18px 22px;margin:0 0 22px;border-left:4px solid #7dd3fc}
+.codeblock summary{cursor:pointer;color:#7dd3fc;font-size:16px;font-weight:600;
+  padding:4px 0;list-style:none;outline:none}
+.codeblock summary::-webkit-details-marker{display:none}
+.codeblock summary::before{content:"▶ ";font-size:11px;color:var(--muted)}
+.codeblock[open] summary::before{content:"▼ "}
+.codeblock summary .meta{color:var(--muted);font-size:13px;font-weight:400;margin-left:8px}
+.codeblock .toolbar{display:flex;justify-content:space-between;align-items:center;
+  margin:12px 0 8px}
+.codeblock .toolbar .filepath{color:var(--muted);font-size:12px;
+  font-family:ui-monospace,Menlo,Consolas,monospace}
+.codeblock button.copy{background:#0f2040;color:#93c5fd;border:1px solid rgba(59,130,246,.4);
+  border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;
+  font-family:inherit;transition:.15s}
+.codeblock button.copy:hover{background:#1e3a5f;color:#bfdbfe}
+.codeblock button.copy.copied{background:#14532d;color:#86efac;border-color:#22c55e}
+.codeblock pre{background:#07111e;color:#7dd3fc;border:1px solid var(--border);
+  border-radius:8px;padding:14px 16px;margin:0;overflow-x:auto;
+  font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;line-height:1.6;
+  white-space:pre;max-height:480px;overflow-y:auto}
+
 footer{margin-top:40px;padding:18px 0;border-top:1px solid var(--border);
   color:var(--muted);font-size:12px;line-height:1.8}
 footer code{background:#07111e;color:#7dd3fc;border:1px solid var(--border);
@@ -125,9 +147,99 @@ footer a{color:#60a5fa;text-decoration:none}
 </table>
 </div>
 
+<details class="codeblock" open>
+<summary>XS 選股程式碼 <span class="meta">3p_resonance.xs ・ 可貼入 XQ 全球贏家 → 自訂腳本 → 選股</span></summary>
+<div class="toolbar">
+  <span class="filepath">C:\CludeHome\projects\3Pstrategy\3p_resonance.xs</span>
+  <button class="copy" onclick="copyXs(this)">複製到剪貼簿</button>
+</div>
+<pre id="xs-src">// =====================================================================
+// 三位一體共振選股 (Trinity Resonance Screener)
+//   月：MACD 黃金交叉 + 柱狀圖(OSC)增長
+//   週：底底高（最近 8 週低點 &gt; 前 8 週低點）
+//   日：MA20 向上 + 股價站上 MA20 + 近 5 日回測 MA20
+// 適用：選股腳本 (Scanner)
+// =====================================================================
+
+// 月 MACD(12,26,9) 需 ~80 個月歷史 ≈ 80*22 = 1760 日，設 2000 安全
+SetTotalBar(2000);
+
+// === 變數宣告 ===
+// MACD 三個 by-reference 輸出
+var: difValue(0), macdValue(0), oscValue(0);
+// 各週期條件旗標
+var: condM(false), condW(false), condD(false);
+// 週線波段低點
+var: wL1(0), wL2(0);
+// 日線 MA20 與 5 日前 MA20（用來判斷向上）
+var: ma20(0), ma20Prev(0);
+
+// =====================================================================
+// 條件 1：月線 MACD 黃金交叉 + 柱狀圖增長
+// =====================================================================
+// 以月線收盤序列計算 MACD，dif/macd/osc 自動更新為「最新月」的值
+MACD(GetField("收盤價", "M"), 12, 26, 9, difValue, macdValue, oscValue);
+
+// 黃金交叉：DIF 向上穿越 MACD 線
+// 柱狀圖增長：OSC = DIF - MACD 比上月放大
+condM = (difValue Crosses Above macdValue) and (oscValue &gt; oscValue[1]);
+
+// =====================================================================
+// 條件 2：週線底底高
+// =====================================================================
+// WL1 = 最近 8 週的最低 Low
+// WL2 = 再往前 8 週（9~16 週前）的最低 Low
+wL1 = Lowest(GetField("最低價", "W"), 8);
+wL2 = Lowest(GetField("最低價", "W")[8], 8);
+condW = wL1 &gt; wL2;
+
+// =====================================================================
+// 條件 3：日線 MA20 向上 + 站上 + 回測
+// =====================================================================
+ma20     = Average(Close, 20);
+ma20Prev = Average(Close, 20)[5];   // 5 日前的 MA20
+
+// (a) MA20 向上：今日 MA20 &gt; 5 日前的 MA20
+// (b) 股價站上 MA20：今日收盤 &gt; MA20
+// (c) 回測 MA20：近 5 日內最低點曾觸碰過 MA20 附近（容差 0.5%）
+condD = (ma20 &gt; ma20Prev)
+    and (Close &gt; ma20)
+    and (Lowest(Low, 5) &lt;= ma20 * 1.005);
+
+// =====================================================================
+// 共振：三條件全成立才觸發
+// =====================================================================
+if condM and condW and condD then begin
+    ret = 1;
+    // order:=1 → 此欄位作為預設排序鍵（由大到小）
+    OutputField1(GetField("成交金額(億)", "D"), "成交金額(億)", order:=1);
+    OutputField2(oscValue,                     "月MACD柱");
+    OutputField3(wL1,                          "週WL1");
+    OutputField4(wL2,                          "週WL2");
+    OutputField5(ma20,                         "日MA20");
+    OutputField6((Close / ma20 - 1) * 100,     "離MA20%");
+end;
+</pre>
+</details>
+
+<script>
+function copyXs(btn) {
+  const code = document.getElementById('xs-src').innerText;
+  navigator.clipboard.writeText(code).then(() => {
+    const orig = btn.innerText;
+    btn.innerText = '✓ 已複製';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.innerText = orig; btn.classList.remove('copied'); }, 2000);
+  }).catch(() => {
+    btn.innerText = '複製失敗';
+    setTimeout(() => { btn.innerText = '複製到剪貼簿'; }, 2000);
+  });
+}
+</script>
+
 <footer>
   <div class="row"><strong>資料更新</strong>：2026-05-18（最後一筆日 K 線日期）</div>
-  <div class="row"><strong>報表生成</strong>：2026-05-18 17:29</div>
+  <div class="row"><strong>報表生成</strong>：2026-05-18 19:17</div>
   <div class="row"><strong>本地檔案</strong>：<code>C:\CludeHome\projects\3Pstrategy\</code></div>
   <div class="row"><strong>對應 XS 腳本</strong>：<code>3p_resonance.xs</code>（同資料夾）</div>
   <div class="row"><strong>資料來源</strong>：yfinance ─ 中型100 + 權值100 去重 150 檔</div>
